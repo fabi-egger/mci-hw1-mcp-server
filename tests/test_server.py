@@ -156,19 +156,23 @@ class FakeLLM:
 
     def _create(self, **kwargs):
         self.requests.append(json.loads(json.dumps(kwargs["messages"], default=str)))
-        return self.scripted.pop(0) if self.scripted else self.scripted_default()
+        item = self.scripted.pop(0) if self.scripted else self.scripted_default()
+        if isinstance(item, Exception):
+            raise item
+        return item
 
     def scripted_default(self):
         return _response(tool_calls=[_tool_call("loop", "lookup_inventory", {"query": "bolt"})])
 
 
-def run_loop(llm, max_iterations=8):
+def run_loop(llm, max_iterations=8, waits=None):
     transcript = agent_client.Transcript(None)
+    sleeper = waits.append if waits is not None else (lambda seconds: None)
 
     async def run():
         async with Client(server.mcp) as mcp_client:
             return await agent_client.run_react(llm, "fake-model", mcp_client, "order 120 sensors",
-                                                transcript, max_iterations)
+                                                transcript, max_iterations, sleep=sleeper)
 
     return asyncio.run(run()), transcript
 
@@ -222,6 +226,73 @@ def test_assistant_message_keeps_provider_extra_fields():
     assert data["content"] is None
     assert data["tool_calls"][0]["function"]["name"] == "lookup_inventory"
     assert data["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "sig123"
+
+
+def test_react_loop_waits_on_rate_limit_and_retries(data_dir):
+    import httpx
+    from openai import RateLimitError
+
+    limit = RateLimitError(
+        "Quota exceeded for the free tier. Please retry in 37.0s.",
+        response=httpx.Response(429, request=httpx.Request("POST", "https://example.test")),
+        body=None,
+    )
+    llm = FakeLLM([limit, _response("done")])
+    waits: list[float] = []
+    answer, transcript = run_loop(llm, waits=waits)
+
+    assert answer == "done"
+    assert waits == [39.0]  # advised 37 s + 2 s margin
+    assert any(line.startswith("[Wait]") for line in transcript.lines)
+    assert len(llm.requests) == 2  # the same request was repeated after the wait
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Please retry in 37.0s.", 37.0),
+    ("Please retry in 9h37m19.9s.", 9 * 3600 + 37 * 60 + 19.9),
+    ("Please retry in 1m5s", 65.0),
+    ("no advice in here", None),
+])
+def test_parse_retry_seconds(text, expected):
+    result = agent_client.parse_retry_seconds(text)
+    if expected is None:
+        assert result is None
+    else:
+        assert result == pytest.approx(expected)
+
+
+def test_react_loop_does_not_wait_for_a_daily_quota(data_dir):
+    import httpx
+    from openai import RateLimitError
+
+    daily = RateLimitError(
+        "Quota exceeded for metric generate_content_free_tier_requests, limit: 20. Please retry in 9h37m19.9s.",
+        response=httpx.Response(429, request=httpx.Request("POST", "https://example.test")),
+        body=None,
+    )
+    llm = FakeLLM([daily])
+    waits: list[float] = []
+    with pytest.raises(RuntimeError, match=r"quota .* used up.*9\.6 h"):
+        run_loop(llm, waits=waits)
+    assert waits == []  # failed immediately instead of sleeping for hours
+    assert len(llm.requests) == 1
+
+
+def test_react_loop_retries_after_temporary_server_and_connection_errors(data_dir):
+    import httpx
+    from openai import APIConnectionError, InternalServerError
+
+    request = httpx.Request("POST", "https://example.test")
+    overloaded = InternalServerError("This model is currently experiencing high demand.",
+                                     response=httpx.Response(503, request=request), body=None)
+    llm = FakeLLM([overloaded, APIConnectionError(request=request), _response("done")])
+    waits: list[float] = []
+    answer, transcript = run_loop(llm, waits=waits)
+
+    assert answer == "done"
+    assert waits == [10.0, 20.0]  # backoff grows with every failed attempt
+    assert sum(line.startswith("[Wait]") for line in transcript.lines) == 2
+    assert len(llm.requests) == 3
 
 
 def test_react_loop_stops_after_max_iterations(data_dir):

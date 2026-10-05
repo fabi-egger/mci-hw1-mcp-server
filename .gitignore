@@ -3,4 +3,5 @@
 __pycache__/
 .pytest_cache/
 data/inventory.db
+data/audit.log
 .DS_Store

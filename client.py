@@ -15,7 +15,9 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -23,9 +25,11 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
-from openai import OpenAI
+from openai import APIConnectionError, InternalServerError, OpenAI, RateLimitError
 
 LOG_DIR = Path(__file__).resolve().parent / "execution_logs"
+MAX_LLM_WAITS = 4
+MAX_AUTO_WAIT_SECONDS = 120  # a quota that resets later than this (e.g. the daily free-tier limit) is not waited for
 
 DEFAULT_PROMPT = (
     "I want to order 120 inductive proximity sensors. Check that they are in stock, "
@@ -111,8 +115,46 @@ async def execute_tool(mcp_client: Client, name: str, raw_arguments: str | None)
     return arguments, text
 
 
+def parse_retry_seconds(text: str) -> float | None:
+    """Read the delay a provider asks for, e.g. 'retry in 37.0s' or 'retry in 9h37m19.9s'."""
+    match = re.search(r"retry in ((?:\d+(?:\.\d+)?[hms])+)", text, re.IGNORECASE)
+    if not match:
+        return None
+    units = {"h": 3600, "m": 60, "s": 1}
+    parts = re.findall(r"(\d+(?:\.\d+)?)([hms])", match.group(1), re.IGNORECASE)
+    return sum(float(number) * units[unit.lower()] for number, unit in parts)
+
+
+def format_duration(seconds: float) -> str:
+    return f"{seconds / 3600:.1f} h" if seconds >= 3600 else f"{seconds / 60:.0f} min"
+
+
+def call_llm(llm, transcript: Transcript, sleep, **request):
+    """Call the LLM and wait out short hiccups: rate limits (free tiers allow only a few requests per minute),
+    503 'high demand' errors and dropped connections. A quota that resets only after hours is not waited for."""
+    for attempt in range(MAX_LLM_WAITS + 1):
+        try:
+            return llm.chat.completions.create(**request)
+        except RateLimitError as exc:
+            advised = parse_retry_seconds(str(exc))
+            if advised is not None and advised > MAX_AUTO_WAIT_SECONDS:
+                raise RuntimeError(
+                    f"The quota for model '{request['model']}' is used up; the provider asks to retry in "
+                    f"{format_duration(advised)}. Use another LLM_MODEL in .env, wait, or enable billing for the key."
+                ) from exc
+            error, reason = exc, "Rate limit reached"
+            wait = advised + 2 if advised is not None else 30.0
+        except (InternalServerError, APIConnectionError) as exc:
+            error, reason = exc, f"LLM temporarily unavailable ({type(exc).__name__})"
+            wait = 10.0 * (attempt + 1)
+        if attempt == MAX_LLM_WAITS:
+            raise error
+        transcript.write(f"[Wait] {reason}. Waiting {wait:.0f} s, then retrying the same request.")
+        sleep(wait)
+
+
 async def run_react(llm, model: str, mcp_client: Client, user_prompt: str,
-                    transcript: Transcript, max_iterations: int = 8) -> str:
+                    transcript: Transcript, max_iterations: int = 8, sleep=time.sleep) -> str:
     tools = await mcp_client.list_tools()
     openai_tools = mcp_tools_to_openai(tools)
     transcript.write(f"Discovered MCP tools: {[tool.name for tool in tools]}")
@@ -124,7 +166,10 @@ async def run_react(llm, model: str, mcp_client: Client, user_prompt: str,
 
     for step in range(1, max_iterations + 1):
         transcript.write(f"\n=== Step {step}: querying the LLM ===")
-        response = llm.chat.completions.create(
+        response = call_llm(
+            llm,
+            transcript,
+            sleep,
             model=model,
             messages=messages,
             tools=openai_tools,
@@ -179,9 +224,14 @@ async def main() -> None:
     transcript.write(f"Run {stamp} | model: {model} | LLM host: {urlparse(base_url).netloc} | MCP server: {mcp_url}")
     transcript.write(f"User request: {prompt}")
 
-    llm = OpenAI(base_url=base_url, api_key=api_key, max_retries=5)
-    async with Client(mcp_url) as mcp_client:
-        await run_react(llm, model, mcp_client, prompt, transcript, args.max_iterations)
+    # The SDK's own retries are off: call_llm handles every retry, so each wait is visible in the log.
+    llm = OpenAI(base_url=base_url, api_key=api_key, max_retries=0)
+    try:
+        async with Client(mcp_url) as mcp_client:
+            await run_react(llm, model, mcp_client, prompt, transcript, args.max_iterations)
+    except RuntimeError as exc:
+        transcript.write(f"\n[Error] {exc}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

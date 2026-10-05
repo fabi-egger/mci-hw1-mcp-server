@@ -43,6 +43,13 @@ uv sync
 cp .env.example .env      # then edit .env: set LLM_API_KEY (and check LLM_MODEL)
 ```
 
+### Notes on free LLM tiers
+
+A single agent run needs 3–5 LLM requests (one per ReAct step). The free Google AI Studio tier is tight: when this was written it allowed about 5 requests per minute and 20 requests **per day and model** (`gemini-3.5-flash` and `gemini-3.6-flash` have separate daily quotas). `client.py` therefore:
+
+- waits and retries on per-minute limits, 503 "high demand" errors and dropped connections (each wait is printed as `[Wait]` and stored in the log);
+- stops immediately with a clear `[Error]` when the quota resets only after hours – switch `LLM_MODEL` in `.env`, wait, or enable billing for the key.
+
 ## Run
 
 Terminal 1 – start the MCP server:
