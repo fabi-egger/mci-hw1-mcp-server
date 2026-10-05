@@ -1,0 +1,19 @@
+[project]
+name = "mci-hw1-mcp"
+version = "0.1.0"
+description = "Homework 1 (Industrial Computing): custom MCP server with SQL lookup, tiered discount and audit log tools, driven by a ReAct agent loop"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.4.4,<4",
+    "openai>=2.46.0",
+    "python-dotenv>=1.2.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
