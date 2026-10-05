@@ -204,6 +204,26 @@ def test_react_loop_reports_tool_errors_as_observations(data_dir):
     assert any(line.startswith("[Observation] ERROR:") for line in transcript.lines)
 
 
+def test_assistant_message_keeps_provider_extra_fields():
+    from openai.types.chat import ChatCompletionMessage
+
+    message = ChatCompletionMessage.model_validate({
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "lookup_inventory", "arguments": "{}"},
+            "extra_content": {"google": {"thought_signature": "sig123"}},
+        }],
+    })
+    data = agent_client.assistant_message_to_dict(message)
+    assert data["role"] == "assistant"
+    assert data["content"] is None
+    assert data["tool_calls"][0]["function"]["name"] == "lookup_inventory"
+    assert data["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "sig123"
+
+
 def test_react_loop_stops_after_max_iterations(data_dir):
     llm = FakeLLM([])  # always asks for another tool call
     with pytest.raises(RuntimeError, match="no final answer"):

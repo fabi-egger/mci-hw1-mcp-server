@@ -76,6 +76,12 @@ def mcp_tools_to_openai(tools) -> list[dict]:
 
 
 def assistant_message_to_dict(message) -> dict:
+    if hasattr(message, "model_dump"):
+        # Gemini 3 puts a thought signature into extra fields (extra_content); keep them when sending the message back.
+        data = message.model_dump(exclude_none=True)
+        data["role"] = "assistant"
+        data.setdefault("content", None)
+        return data
     data: dict = {"role": "assistant", "content": message.content}
     if message.tool_calls:
         data["tool_calls"] = [
