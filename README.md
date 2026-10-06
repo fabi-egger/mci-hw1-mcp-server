@@ -2,7 +2,7 @@
 
 Industrial Computing (MCI, DiBSE, WS2026), Option A (technical track).
 
-Domain: group bookings for the courses of the climbing gym **Bergstation Telfs** (Tyrol).
+Domain: group bookings (courses and entry tickets) of the climbing gym **Bergstation Telfs** (Tyrol).
 
 A Python **MCP server** exposes three tools, and a **ReAct agent loop** lets an LLM discover and use them at runtime:
 
@@ -24,11 +24,14 @@ The client does not know the tools in advance: it lists them via MCP (`list_tool
 
 ## About the data
 
-The offers in the database are **real**: courses and packages of the bouldering and climbing centre [Bergstation Telfs](https://bergstation.tirol/), copied from the public page <https://bergstation.tirol/kurse> on **2026-10-06** (name, schedule, price, what the price includes, free places, requirements). Every row names its source.
+Every row of the database names its source in the `source` column:
 
-- **Snapshot:** free places change daily; prices and dates may be outdated. Check bergstation.tirol before relying on them.
-- **Not included:** entry and rental prices (only visible in the ticket shop after login), trainer names and contact details.
+- **Real, courses:** courses and packages of the bouldering and climbing centre [Bergstation Telfs](https://bergstation.tirol/), copied from the public page <https://bergstation.tirol/kurse> on **2026-10-06** (name, schedule, price, what the price includes, free places, requirements).
+- **Real, youth tickets:** the five youth (14–25) entry tickets and cards, read from the gym's online ticket shop on 2026-10-06.
+- **Estimates:** all other ticket prices (adults, children, minis) are *not published* and were scaled from the youth prices; they are marked `estimate (demo value), not published`.
+- **Not included:** rental prices, trainer names and contact details.
 - **Fictional:** the group discount below (our own demo rule, not an offer of the gym) and the audit-log entries.
+- **Snapshot:** free places change daily; prices and dates may be outdated. Check bergstation.tirol before relying on them.
 - No booking is made; the tools only produce quotes. This is a student project and is **not affiliated with, endorsed or authorised by** Bergstation Telfs.
 
 ## Discount rule (demo rule)
@@ -88,6 +91,7 @@ Example prompts that exercise the tools:
 - `Is the slightly advanced boulder training group still free?` → lookup, fully booked (0/6) case
 - `We want to register 6 children for the ÖAV children's group - is there room, and what are the requirements?` → lookup, only 4 of 8 places free, requirement "Topropeschein"
 - `Our club wants 12 places in the beginner top-rope course. Quote it and record the quote in the audit log.` → all three tools in sequence
+- `A youth group of 25 (aged 14-25) wants day tickets. Quote the price with the group discount and record it.` → real youth ticket price (14.00 EUR), discount over two tiers
 
 Read the audit log resource with any MCP client, or just `cat data/audit.log`.
 
@@ -110,7 +114,7 @@ The tests call the tools through an in-process MCP client (discount math against
 ## Project structure
 
 ```
-server.py            MCP server: tools, resource, SQLite seed data (Bergstation offers)
+server.py            MCP server: tools, resource, SQLite seed data (Bergstation courses and tickets)
 client.py            ReAct agent loop (LLM + MCP client), writes execution logs
 tests/test_server.py tool, resource and agent-loop tests
 execution_logs/      transcripts of real runs

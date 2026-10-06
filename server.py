@@ -1,8 +1,9 @@
 """MCP server for Homework 1: SQL lookup of the courses/offers of the climbing gym Bergstation Telfs,
 tiered group discount, audit log.
 
-The offers are real (published on bergstation.tirol/kurse, snapshot 2026-10-06). The group discount is our
-own demo rule and not an offer of the gym.
+The courses are real (published on bergstation.tirol/kurse, snapshot 2026-10-06) and so are the youth tickets
+(ticket shop, 2026-10-06). All other ticket prices are estimates, marked as such in the `source` column.
+The group discount is our own demo rule and not an offer of the gym.
 
 Run:  uv run server.py   (serves MCP over HTTP at http://127.0.0.1:8000/mcp)
 """
@@ -43,13 +44,15 @@ DISCOUNT_TIERS: list[tuple[int, int | None, Decimal]] = [
 ]
 
 SOURCE = "bergstation.tirol/kurse, 2026-10-06"
+SOURCE_SHOP = "ticket shop (logged in), 2026-10-06"
+SOURCE_ESTIMATE = "estimate (demo value), not published"
 
 # Courses and offers of the Bergstation Telfs as published on the course page (snapshot 2026-10-06).
 # Prices in integer cents; free_places/max_places are None where the page names no fixed capacity.
-# Entry and rental prices are not part of the data: they are only visible inside the ticket shop (login).
+# Rental prices are not part of the data (only visible in the ticket shop, no reliable source).
 # (sku, name, name_en, category, schedule, price_cents, price_unit, price_note,
 #  free_places, max_places, requirement, source)
-SEED_OFFERS = [
+SEED_COURSES = [
     ("BST-AUF-2026-10", "Aufbaukurs Seilklettern - Vorstieg", "Lead climbing advanced course", "Rope course",
      "Wednesdays 19:00-21:00, 14.10. and 21.10.2026", 7000, "per place", "incl. entry and rental",
      0, 4, None, SOURCE),
@@ -84,6 +87,39 @@ SEED_OFFERS = [
      11900, "flat fee for up to 8 children, 7.00 EUR per additional child",
      "incl. rental and entry to the whole hall", None, None, None, SOURCE),
 ]
+
+# Entry tickets. The five youth prices (14-25) are real, read from the ticket shop on 2026-10-06. The other age
+# groups are estimates scaled from them: day ticket from a third-party listing, cards in the same ratio to the day
+# ticket as the youth cards (about -18 % for 6 visits, -21 % for 11 visits).
+# (type, German name, English name, what it is, price unit)
+_TICKET_TYPES = [
+    ("DAY", "Tageskarte Tag {de}", "Day ticket {en}", "Single day entry", "per ticket"),
+    ("6X", "Punktekarten 6er {de} (gültig 5 Jahre)", "6-visit card {en} (valid 5 years)",
+     "6 entries, valid 5 years", "per card"),
+    ("11X", "Punktekarten 11er {de} (gültig 5 Jahre)", "11-visit card {en} (valid 5 years)",
+     "11 entries, valid 5 years", "per card"),
+    ("HALF", "Zeitkarten Halbjahreskarte {de}", "Half-year pass {en}", "Half-year pass", "per pass"),
+    ("YEAR", "Zeitkarten Jahrskarte {de}", "Annual pass {en}", "Annual pass", "per pass"),
+]
+# group: (German label, English label, age requirement, source, price in cents per ticket type)
+_TICKET_GROUPS = {
+    "YOUTH": ("Jugend 14 - 25", "youth 14-25", "Age 14-25", SOURCE_SHOP,
+              {"DAY": 1400, "6X": 6900, "11X": 12200, "HALF": 34900, "YEAR": 48900}),
+    "ADULT": ("Erwachsene ab 26", "adults 26+", "Age 26 and over", SOURCE_ESTIMATE,
+              {"DAY": 1580, "6X": 7800, "11X": 13800, "HALF": 39400, "YEAR": 55200}),
+    "CHILD": ("Kinder 6 bis 13", "children 6-13", "Age 6-13", SOURCE_ESTIMATE,
+              {"DAY": 850, "6X": 4200, "11X": 7400, "HALF": 21200, "YEAR": 29700}),
+    "MINI": ("Minis unter 6", "minis under 6", "Under 6", SOURCE_ESTIMATE, {"DAY": 700}),
+}
+SEED_TICKETS = [
+    (f"BST-TKT-{kind}-{group}", german.format(de=de), english.format(en=en), "Ticket", what,
+     prices[kind], unit, "entry only", None, None, age, source)
+    for group, (de, en, age, source, prices) in _TICKET_GROUPS.items()
+    for kind, german, english, what, unit in _TICKET_TYPES
+    if kind in prices
+]
+
+SEED_OFFERS = SEED_COURSES + SEED_TICKETS
 
 mcp = FastMCP("Bergstation-Telfs-MCP-Server")
 _log_lock = threading.Lock()

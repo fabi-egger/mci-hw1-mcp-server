@@ -74,9 +74,25 @@ def test_offer_without_fixed_capacity_is_available(data_dir):
 
 
 def test_every_offer_names_its_source(data_dir):
-    offers = call("lookup_inventory", {"query": "course", "limit": 20})["offers"]
-    assert len(offers) >= 5
-    assert all("bergstation.tirol" in o["source"] for o in offers)
+    courses = call("lookup_inventory", {"query": "course", "limit": 20})["offers"]
+    assert len(courses) >= 5
+    assert all("bergstation.tirol/kurse" in o["source"] for o in courses)
+
+
+def test_youth_tickets_are_real_and_all_other_ticket_prices_are_flagged_as_estimates(data_dir):
+    youth = call("lookup_inventory", {"query": "youth", "limit": 20})["offers"]
+    assert {o["sku"]: o["unit_price_eur"] for o in youth} == {
+        "BST-TKT-DAY-YOUTH": 14.0, "BST-TKT-6X-YOUTH": 69.0, "BST-TKT-11X-YOUTH": 122.0,
+        "BST-TKT-HALF-YOUTH": 349.0, "BST-TKT-YEAR-YOUTH": 489.0,
+    }
+    assert all(o["source"].startswith("ticket shop") and o["requirement"] == "Age 14-25" for o in youth)
+
+    tickets = call("lookup_inventory", {"query": "ticket", "limit": 20})["offers"]
+    assert len(tickets) == 16
+    for offer in tickets:
+        is_youth = offer["sku"].endswith("-YOUTH")
+        assert offer["source"].startswith("ticket shop" if is_youth else "estimate"), offer["sku"]
+        assert offer["free_places"] is None and offer["available"] is True
 
 
 def test_sql_injection_is_harmless(data_dir):
