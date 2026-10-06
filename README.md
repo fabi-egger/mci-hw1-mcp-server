@@ -50,7 +50,7 @@ Example: a club books 12 places of the top-rope basic course at 35.00 EUR → 9�
 
 ## Setup
 
-Requirements: [uv](https://docs.astral.sh/uv/) (it installs a matching Python ≥ 3.11 automatically) and an API key for any OpenAI-compatible LLM endpoint (e.g. a free Groq or Google AI Studio key; the examples in `execution_logs/` were produced with Groq / `qwen/qwen3.8-27b` and, earlier, Google's `gemini-3.5-flash`).
+Requirements: [uv](https://docs.astral.sh/uv/) (it installs a matching Python ≥ 3.11 automatically) and an API key for any OpenAI-compatible LLM endpoint (e.g. a free Groq or Google AI Studio key; the examples in `execution_logs/` were produced with Groq / `qwen/qwen3.8-27b`).
 
 ```bash
 uv sync
@@ -61,7 +61,7 @@ cp .env.example .env      # then edit .env: set LLM_API_KEY (and check LLM_MODEL
 
 A single agent run needs 3–5 LLM requests (one per ReAct step, roughly 5,000 input tokens in total). Free tiers are tight (October 2026):
 
-- **Groq** (recommended, `.env.example`): about 30 requests/min, 1,000 requests/day and 8,000 tokens/min, 200,000 tokens/day per model. Model choice matters: `openai/gpt-oss-120b` wrote its tool call into the reasoning field and then stopped with an empty answer, while `qwen/qwen3.8-27b` makes proper tool calls.
+- **Groq** (recommended, `.env.example`): about 30 requests/min, 1,000 requests/day and 8,000 tokens/min, 200,000 tokens/day per model. Model choice matters: `openai/gpt-oss-120b` wrote its tool call into the reasoning field and then stopped with an empty answer, `openai/gpt-oss-20b` looked at only one of three matching sessions and wrongly concluded that 12 places were not available, while `qwen/qwen3.8-27b` makes proper tool calls and answered all three example questions correctly.
 - **Google AI Studio** (Gemini): about 5 requests/min and only 20 requests **per day and model**.
 
 `client.py` therefore:
@@ -84,7 +84,7 @@ uv run client.py
 uv run client.py "Is the slightly advanced boulder training group still free? If not, what would 4 places of the beginners group cost?"
 ```
 
-Every run is also written to `execution_logs/run-<timestamp>.txt` (Thought / Action / Observation / final answer).
+Every run is also written to `execution_logs/run-<timestamp>-<model>.txt` (Thought / Action / Observation / final answer).
 
 Example prompts that exercise the tools:
 

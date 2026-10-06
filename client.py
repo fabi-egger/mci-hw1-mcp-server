@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
-from openai import APIConnectionError, InternalServerError, OpenAI, RateLimitError
+from openai import APIConnectionError, APIStatusError, InternalServerError, OpenAI, RateLimitError
 
 LOG_DIR = Path(__file__).resolve().parent / "execution_logs"
 MAX_LLM_WAITS = 4
@@ -203,6 +203,23 @@ async def run_react(llm, model: str, mcp_client: Client, user_prompt: str,
     raise RuntimeError(f"Stopped: no final answer after {max_iterations} steps.")
 
 
+def describe_llm_error(exc: Exception) -> str:
+    """One readable line instead of a traceback (wrong model name, bad key, endpoint unreachable, ...)."""
+    if isinstance(exc, APIStatusError):
+        # The SDK keeps the provider's own sentence in exc.body (a dict for Groq/OpenAI, a list for Gemini).
+        body = exc.body
+        detail = body["message"] if isinstance(body, dict) and body.get("message") else exc.message
+        return f"{type(exc).__name__} (HTTP {exc.status_code}): {detail}"
+    if isinstance(exc, APIConnectionError):
+        return f"{type(exc).__name__}: could not reach the LLM endpoint ({exc})"
+    return str(exc)
+
+
+def log_path(stamp: str, model: str) -> Path:
+    """execution_logs/run-<timestamp>-<model>.txt, so the model is visible from the file name."""
+    return LOG_DIR / f"run-{stamp}-{re.sub(r'[^A-Za-z0-9._-]+', '-', model)}.txt"
+
+
 def require_env(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value or value.startswith("<"):
@@ -225,7 +242,7 @@ async def main() -> None:
     prompt = " ".join(args.prompt) or DEFAULT_PROMPT
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    transcript = Transcript(None if args.no_log else LOG_DIR / f"run-{stamp}.txt")
+    transcript = Transcript(None if args.no_log else log_path(stamp, model))
     transcript.write(f"Run {stamp} | model: {model} | LLM host: {urlparse(base_url).netloc} | MCP server: {mcp_url}")
     transcript.write(f"User request: {prompt}")
 
@@ -234,8 +251,8 @@ async def main() -> None:
     try:
         async with Client(mcp_url) as mcp_client:
             await run_react(llm, model, mcp_client, prompt, transcript, args.max_iterations)
-    except RuntimeError as exc:
-        transcript.write(f"\n[Error] {exc}")
+    except (RuntimeError, APIStatusError, APIConnectionError) as exc:
+        transcript.write(f"\n[Error] {describe_llm_error(exc)}")
         sys.exit(1)
 
 

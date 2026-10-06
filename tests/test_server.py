@@ -354,6 +354,27 @@ def test_react_loop_retries_after_temporary_server_and_connection_errors(data_di
     assert len(llm.requests) == 3
 
 
+def test_llm_errors_are_described_in_one_readable_line():
+    import httpx
+    from openai import APIConnectionError, NotFoundError
+
+    request = httpx.Request("POST", "https://example.test")
+    not_found = NotFoundError(
+        "Error code: 404", response=httpx.Response(404, request=request),
+        body={"message": "The model `x` does not exist or you do not have access to it."},
+    )
+    assert agent_client.describe_llm_error(not_found) == (
+        "NotFoundError (HTTP 404): The model `x` does not exist or you do not have access to it.")
+    assert "could not reach" in agent_client.describe_llm_error(APIConnectionError(request=request))
+    assert agent_client.describe_llm_error(RuntimeError("quota used up")) == "quota used up"
+
+
+def test_log_file_name_contains_the_model():
+    path = agent_client.log_path("20261006-090000", "qwen/qwen3.8-27b")
+    assert path.name == "run-20261006-090000-qwen-qwen3.8-27b.txt"
+    assert path.parent.name == "execution_logs"
+
+
 def test_react_loop_stops_after_max_iterations(data_dir):
     llm = FakeLLM([])  # always asks for another tool call
     with pytest.raises(RuntimeError, match="no final answer"):
