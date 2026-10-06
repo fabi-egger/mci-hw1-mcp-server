@@ -32,18 +32,20 @@ MAX_LLM_WAITS = 4
 MAX_AUTO_WAIT_SECONDS = 120  # a quota that resets later than this (e.g. the daily free-tier limit) is not waited for
 
 DEFAULT_PROMPT = (
-    "I want to order 120 inductive proximity sensors. Check that they are in stock, "
-    "compute the price including the volume discount and record the quote in the audit log."
+    "Our climbing club wants to book 12 places in the beginner top-rope course (Basiskurs Toprope). "
+    "Check that enough places are free, compute the price including the group discount "
+    "and record the quote in the audit log."
 )
 
 SYSTEM_PROMPT = (
-    "You are a procurement assistant for a shop that sells industrial components. "
+    "You are a booking assistant for the Bergstation Telfs, a bouldering and climbing centre in Tyrol. "
     "Work in a ReAct style. Whenever you call tools, the same message MUST also contain ONE short sentence "
     "of plain text saying what you need and why (your Thought) - never call a tool without it. "
     "Then call the tools you need (Action) and use their results (Observation) to decide the next step. "
-    "Never guess stock levels, prices or discounts - always use the tools. "
-    "When you have quoted or confirmed an order, record it with append_audit_log "
-    "(event 'ORDER_QUOTED' with the key facts as details). "
+    "Never guess free places, prices or discounts - always use the tools. "
+    "The group discount is a demo rule of this application, not an offer of the gym; say so briefly when you "
+    "quote it. When you have quoted a booking, record it with append_audit_log "
+    "(event 'BOOKING_QUOTED' with the key facts as details). "
     "Finish with a short, clear answer for the customer."
 )
 

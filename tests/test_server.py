@@ -38,31 +38,57 @@ def call_error(name: str, arguments: dict) -> str:
 # --- tool 1: inventory lookup -------------------------------------------------------------
 
 def test_lookup_by_sku_and_by_name(data_dir):
-    by_sku = call("lookup_inventory", {"query": "sku-4001"})
+    by_sku = call("lookup_inventory", {"query": "bst-oav-kids-2026"})  # SKUs match case-insensitively
     assert by_sku["count"] == 1
-    assert by_sku["products"][0]["name"] == "Inductive Proximity Sensor M12"
-    assert by_sku["products"][0]["unit_price_eur"] == 14.20
+    kids = by_sku["offers"][0]
+    assert kids["name"] == "ÖAV Betreute Gruppe Kinder 7-10 Jahre"
+    assert kids["unit_price_eur"] == 150.0
+    assert (kids["free_places"], kids["max_places"]) == (4, 8)
+    assert "Topropeschein" in kids["requirement"]
 
-    by_word = call("lookup_inventory", {"query": "bearing"})
-    assert {p["sku"] for p in by_word["products"]} == {"SKU-2001", "SKU-2002"}
+    by_german_word = call("lookup_inventory", {"query": "basiskurs"})
+    assert {o["sku"] for o in by_german_word["offers"]} == {"BST-BAS-2026-11-1", "BST-BAS-2026-11-2", "BST-BAS-2027-01"}
 
 
-def test_out_of_stock_is_flagged(data_dir):
-    result = call("lookup_inventory", {"query": "SKU-2002"})
-    assert result["products"][0]["stock"] == 0
-    assert result["products"][0]["in_stock"] is False
+def test_lookup_needs_every_word_and_searches_english_names(data_dir):
+    result = call("lookup_inventory", {"query": "top-rope beginners"})
+    assert {o["sku"] for o in result["offers"]} == {"BST-BAS-2026-11-1", "BST-BAS-2026-11-2", "BST-BAS-2027-01"}
+    assert call("lookup_inventory", {"query": "boulder training slightly advanced"})["count"] == 1
+
+
+def test_fully_booked_course_is_flagged(data_dir):
+    result = call("lookup_inventory", {"query": "BST-BOU-FOR-2026-11"})
+    offer = result["offers"][0]
+    assert offer["free_places"] == 0
+    assert offer["available"] is False
+    # the sibling course for beginners still has places: that is the alternative the agent should find
+    assert call("lookup_inventory", {"query": "BST-BOU-ANF-2026-11"})["offers"][0]["available"] is True
+
+
+def test_offer_without_fixed_capacity_is_available(data_dir):
+    offer = call("lookup_inventory", {"query": "personal training"})["offers"][0]
+    assert offer["free_places"] is None
+    assert offer["available"] is True
+    assert offer["unit_price_eur"] == 60.0
+    assert offer["price_unit"] == "per hour"
+
+
+def test_every_offer_names_its_source(data_dir):
+    offers = call("lookup_inventory", {"query": "course", "limit": 20})["offers"]
+    assert len(offers) >= 5
+    assert all("bergstation.tirol" in o["source"] for o in offers)
 
 
 def test_sql_injection_is_harmless(data_dir):
-    assert call("lookup_inventory", {"query": "'; DROP TABLE products; --"})["count"] == 0
+    assert call("lookup_inventory", {"query": "'; DROP TABLE offers; --"})["count"] == 0
     assert call("lookup_inventory", {"query": "' OR '1'='1"})["count"] == 0
     assert call("lookup_inventory", {"query": "%"})["count"] == 0  # wildcard is escaped
-    assert call("lookup_inventory", {"query": "bearing"})["count"] == 2  # table still intact
+    assert call("lookup_inventory", {"query": "basiskurs"})["count"] == 3  # table still intact
 
 
 def test_lookup_validates_input(data_dir):
     assert "query must be" in call_error("lookup_inventory", {"query": "   "})
-    assert "limit must be" in call_error("lookup_inventory", {"query": "bolt", "limit": 0})
+    assert "limit must be" in call_error("lookup_inventory", {"query": "course", "limit": 0})
 
 
 # --- tool 2: tiered discount ---------------------------------------------------------------
@@ -162,7 +188,7 @@ class FakeLLM:
         return item
 
     def scripted_default(self):
-        return _response(tool_calls=[_tool_call("loop", "lookup_inventory", {"query": "bolt"})])
+        return _response(tool_calls=[_tool_call("loop", "lookup_inventory", {"query": "course"})])
 
 
 def run_loop(llm, max_iterations=8, waits=None):
@@ -171,7 +197,7 @@ def run_loop(llm, max_iterations=8, waits=None):
 
     async def run():
         async with Client(server.mcp) as mcp_client:
-            return await agent_client.run_react(llm, "fake-model", mcp_client, "order 120 sensors",
+            return await agent_client.run_react(llm, "fake-model", mcp_client, "book 12 places",
                                                 transcript, max_iterations, sleep=sleeper)
 
     return asyncio.run(run()), transcript
@@ -179,18 +205,18 @@ def run_loop(llm, max_iterations=8, waits=None):
 
 def test_react_loop_executes_tools_and_feeds_observations_back(data_dir):
     llm = FakeLLM([
-        _response("I need the stock level first.", [_tool_call("c1", "lookup_inventory", {"query": "SKU-4001"})]),
+        _response("I need the free places first.", [_tool_call("c1", "lookup_inventory", {"query": "BST-BAS-2027-01"})]),
         _response(None, [
-            _tool_call("c2", "compute_tiered_discount", {"quantity": 120, "unit_price_eur": 14.2}),
-            _tool_call("c3", "append_audit_log", {"event": "ORDER_QUOTED", "details": "120 x SKU-4001"}),
+            _tool_call("c2", "compute_tiered_discount", {"quantity": 12, "unit_price_eur": 35.0}),
+            _tool_call("c3", "append_audit_log", {"event": "BOOKING_QUOTED", "details": "12 x BST-BAS-2027-01"}),
         ]),
-        _response("Quote ready: 120 sensors."),
+        _response("Quote ready: 12 places."),
     ])
     answer, transcript = run_loop(llm)
 
-    assert answer == "Quote ready: 120 sensors."
+    assert answer == "Quote ready: 12 places."
     text = "\n".join(transcript.lines)
-    assert "[Thought] I need the stock level first." in text
+    assert "[Thought] I need the free places first." in text
     assert "[Action] lookup_inventory" in text and "[Observation]" in text
     last_request = llm.requests[-1]
     tool_messages = [m for m in last_request if m["role"] == "tool"]

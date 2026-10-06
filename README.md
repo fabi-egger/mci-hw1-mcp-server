@@ -2,12 +2,14 @@
 
 Industrial Computing (MCI, DiBSE, WS2026), Option A (technical track).
 
+Domain: group bookings for the courses of the climbing gym **Bergstation Telfs** (Tyrol).
+
 A Python **MCP server** exposes three tools, and a **ReAct agent loop** lets an LLM discover and use them at runtime:
 
 | Tool | What it does |
 |---|---|
-| `lookup_inventory(query, limit)` | **SQL lookup** (sqlite3) on a product inventory: by SKU or name/category substring, returns stock and unit price |
-| `compute_tiered_discount(quantity, unit_price_eur)` | **Formula engine**: graduated volume discount with a per-tier breakdown |
+| `lookup_inventory(query, limit)` | **SQL lookup** (sqlite3) on the gym's courses and offers: by SKU or by words from the German/English name or category; returns schedule, price, what is included, free places and requirements |
+| `compute_tiered_discount(quantity, unit_price_eur)` | **Formula engine**: graduated group discount with a per-tier breakdown |
 | `append_audit_log(event, details)` | **Log audit**: appends one JSON line per event to `data/audit.log`; the same file is exposed read-only as the MCP **resource** `audit://log` |
 
 ```
@@ -20,9 +22,18 @@ A Python **MCP server** exposes three tools, and a **ReAct agent loop** lets an 
 
 The client does not know the tools in advance: it lists them via MCP (`list_tools`), passes their JSON schemas to the LLM and executes whatever tool calls the model returns.
 
-## Discount rule
+## About the data
 
-Every unit gets the discount of the tier it falls into (like tax brackets). Amounts are rounded half-up to cents per tier; totals are the sum of the tier values.
+The offers in the database are **real**: courses and packages of the bouldering and climbing centre [Bergstation Telfs](https://bergstation.tirol/), copied from the public page <https://bergstation.tirol/kurse> on **2026-10-06** (name, schedule, price, what the price includes, free places, requirements). Every row names its source.
+
+- **Snapshot:** free places change daily; prices and dates may be outdated. Check bergstation.tirol before relying on them.
+- **Not included:** entry and rental prices (only visible in the ticket shop after login), trainer names and contact details.
+- **Fictional:** the group discount below (our own demo rule, not an offer of the gym) and the audit-log entries.
+- No booking is made; the tools only produce quotes. This is a student project and is **not affiliated with, endorsed or authorised by** Bergstation Telfs.
+
+## Discount rule (demo rule)
+
+Every unit (place, hour) gets the discount of the tier it falls into (like tax brackets). Amounts are rounded half-up to cents per tier; totals are the sum of the tier values.
 
 | Units | Discount |
 |---|---|
@@ -32,7 +43,7 @@ Every unit gets the discount of the tier it falls into (like tax brackets). Amou
 | 100–499 | 15 % |
 | 500 and more | 20 % |
 
-Example: 120 units at 10.00 EUR → 9×0 % + 40×5 % + 50×10 % + 21×15 % → gross 1200.00, discount 101.50, **net 1098.50 EUR** (effective 8.46 %).
+Example: a club books 12 places of the top-rope basic course at 35.00 EUR → 9×0 % + 3×5 % → gross 420.00, discount 5.25, **net 414.75 EUR** (effective 1.25 %).
 
 ## Setup
 
@@ -63,20 +74,20 @@ Terminal 1 – start the MCP server:
 uv run server.py
 ```
 
-Terminal 2 – run the agent (without arguments it uses an example order):
+Terminal 2 – run the agent (without arguments it uses an example booking):
 
 ```bash
 uv run client.py
-uv run client.py "Which bearings do you have in stock? I need 600 of the cheaper one - what is the total?"
+uv run client.py "Is the slightly advanced boulder training group still free? If not, what would 4 places of the beginners group cost?"
 ```
 
 Every run is also written to `execution_logs/run-<timestamp>.txt` (Thought / Action / Observation / final answer).
 
 Example prompts that exercise the tools:
 
-- `Do you have SKU-2002 in stock?` → inventory lookup, out-of-stock case
-- `What does an order of 600 units at 0.33 EUR cost?` → discount engine, all tiers
-- `Quote 120 inductive proximity sensors and record the quote in the audit log.` → all three tools in sequence
+- `Is the slightly advanced boulder training group still free?` → lookup, fully booked (0/6) case
+- `We want to register 6 children for the ÖAV children's group - is there room, and what are the requirements?` → lookup, only 4 of 8 places free, requirement "Topropeschein"
+- `Our club wants 12 places in the beginner top-rope course. Quote it and record the quote in the audit log.` → all three tools in sequence
 
 Read the audit log resource with any MCP client, or just `cat data/audit.log`.
 
@@ -90,7 +101,7 @@ The tests call the tools through an in-process MCP client (discount math against
 
 ## Design and security notes
 
-- **SQL:** parameterised queries only, `LIKE` wildcards are escaped, the lookup uses a **read-only** database connection.
+- **SQL:** parameterised queries only (the SQL text consists of constant fragments, the number of search words is capped at 6), `LIKE` wildcards are escaped, the lookup uses a **read-only** database connection.
 - **Audit log:** fixed file path (the model cannot choose a path), event names restricted to `[A-Za-z0-9_.:-]`, one JSON object per line (newlines are escaped, so an entry cannot forge further entries).
 - **Money:** `Decimal` instead of floats; prices are stored as integer cents.
 - **Server** binds to `127.0.0.1` only. Inputs are validated and errors are returned to the model as observations so it can correct itself.
@@ -99,7 +110,7 @@ The tests call the tools through an in-process MCP client (discount math against
 ## Project structure
 
 ```
-server.py            MCP server: tools, resource, SQLite seed data
+server.py            MCP server: tools, resource, SQLite seed data (Bergstation offers)
 client.py            ReAct agent loop (LLM + MCP client), writes execution logs
 tests/test_server.py tool, resource and agent-loop tests
 execution_logs/      transcripts of real runs
