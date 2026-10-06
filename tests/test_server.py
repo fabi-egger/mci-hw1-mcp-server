@@ -228,6 +228,20 @@ def test_assistant_message_keeps_provider_extra_fields():
     assert data["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "sig123"
 
 
+def test_assistant_message_drops_unsupported_top_level_fields():
+    from openai.types.chat import ChatCompletionMessage
+
+    message = ChatCompletionMessage.model_validate({
+        "role": "assistant",
+        "content": "I will look it up.",
+        "reasoning": "hidden chain of thought that some providers reject when sent back",
+        "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "lookup_inventory", "arguments": "{}"}}],
+    })
+    data = agent_client.assistant_message_to_dict(message)
+    assert set(data) == {"role", "content", "tool_calls"}
+    assert data["content"] == "I will look it up."
+
+
 def test_react_loop_waits_on_rate_limit_and_retries(data_dir):
     import httpx
     from openai import RateLimitError
@@ -251,6 +265,9 @@ def test_react_loop_waits_on_rate_limit_and_retries(data_dir):
     ("Please retry in 37.0s.", 37.0),
     ("Please retry in 9h37m19.9s.", 9 * 3600 + 37 * 60 + 19.9),
     ("Please retry in 1m5s", 65.0),
+    ("Rate limit reached. Please try again in 7.5s.", 7.5),
+    ("Please try again in 14m22.5s. Need more tokens?", 14 * 60 + 22.5),
+    ("Please try again in 820ms.", 0.82),
     ("no advice in here", None),
 ])
 def test_parse_retry_seconds(text, expected):

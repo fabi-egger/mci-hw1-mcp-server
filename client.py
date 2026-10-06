@@ -38,9 +38,10 @@ DEFAULT_PROMPT = (
 
 SYSTEM_PROMPT = (
     "You are a procurement assistant for a shop that sells industrial components. "
-    "Work in a ReAct style: before every tool call write ONE short sentence explaining what you need "
-    "and why (Thought), then call the tools you need (Action), and use their results (Observation) "
-    "to decide the next step. Never guess stock levels, prices or discounts - always use the tools. "
+    "Work in a ReAct style. Whenever you call tools, the same message MUST also contain ONE short sentence "
+    "of plain text saying what you need and why (your Thought) - never call a tool without it. "
+    "Then call the tools you need (Action) and use their results (Observation) to decide the next step. "
+    "Never guess stock levels, prices or discounts - always use the tools. "
     "When you have quoted or confirmed an order, record it with append_audit_log "
     "(event 'ORDER_QUOTED' with the key facts as details). "
     "Finish with a short, clear answer for the customer."
@@ -81,11 +82,13 @@ def mcp_tools_to_openai(tools) -> list[dict]:
 
 def assistant_message_to_dict(message) -> dict:
     if hasattr(message, "model_dump"):
-        # Gemini 3 puts a thought signature into extra fields (extra_content); keep them when sending the message back.
+        # Keep only the fields every provider accepts back (Groq rejects e.g. a top-level "reasoning"), but keep
+        # everything inside tool_calls: Gemini 3 puts its thought signature there (extra_content).
         data = message.model_dump(exclude_none=True)
-        data["role"] = "assistant"
-        data.setdefault("content", None)
-        return data
+        result: dict = {"role": "assistant", "content": data.get("content")}
+        if data.get("tool_calls"):
+            result["tool_calls"] = data["tool_calls"]
+        return result
     data: dict = {"role": "assistant", "content": message.content}
     if message.tool_calls:
         data["tool_calls"] = [
@@ -116,12 +119,12 @@ async def execute_tool(mcp_client: Client, name: str, raw_arguments: str | None)
 
 
 def parse_retry_seconds(text: str) -> float | None:
-    """Read the delay a provider asks for, e.g. 'retry in 37.0s' or 'retry in 9h37m19.9s'."""
-    match = re.search(r"retry in ((?:\d+(?:\.\d+)?[hms])+)", text, re.IGNORECASE)
+    """Read the delay a provider asks for, e.g. 'retry in 37.0s' (Gemini) or 'try again in 14m22.5s' (Groq)."""
+    match = re.search(r"(?:retry|try again) in ((?:\d+(?:\.\d+)?(?:ms|[hms]))+)", text, re.IGNORECASE)
     if not match:
         return None
-    units = {"h": 3600, "m": 60, "s": 1}
-    parts = re.findall(r"(\d+(?:\.\d+)?)([hms])", match.group(1), re.IGNORECASE)
+    units = {"h": 3600, "m": 60, "s": 1, "ms": 0.001}
+    parts = re.findall(r"(\d+(?:\.\d+)?)(ms|[hms])", match.group(1), re.IGNORECASE)
     return sum(float(number) * units[unit.lower()] for number, unit in parts)
 
 

@@ -36,7 +36,7 @@ Example: 120 units at 10.00 EUR → 9×0 % + 40×5 % + 50×10 % + 21×15 % → g
 
 ## Setup
 
-Requirements: [uv](https://docs.astral.sh/uv/) (it installs a matching Python ≥ 3.11 automatically) and an API key for any OpenAI-compatible LLM endpoint (e.g. a free Google AI Studio key).
+Requirements: [uv](https://docs.astral.sh/uv/) (it installs a matching Python ≥ 3.11 automatically) and an API key for any OpenAI-compatible LLM endpoint (e.g. a free Groq or Google AI Studio key; the examples in `execution_logs/` were produced with Groq / `qwen/qwen3.8-27b` and, earlier, Google's `gemini-3.5-flash`).
 
 ```bash
 uv sync
@@ -45,10 +45,15 @@ cp .env.example .env      # then edit .env: set LLM_API_KEY (and check LLM_MODEL
 
 ### Notes on free LLM tiers
 
-A single agent run needs 3–5 LLM requests (one per ReAct step). The free Google AI Studio tier is tight: when this was written it allowed about 5 requests per minute and 20 requests **per day and model** (`gemini-3.5-flash` and `gemini-3.6-flash` have separate daily quotas). `client.py` therefore:
+A single agent run needs 3–5 LLM requests (one per ReAct step, roughly 5,000 input tokens in total). Free tiers are tight (October 2026):
+
+- **Groq** (recommended, `.env.example`): about 30 requests/min, 1,000 requests/day and 8,000 tokens/min, 200,000 tokens/day per model. Model choice matters: `openai/gpt-oss-120b` wrote its tool call into the reasoning field and then stopped with an empty answer, while `qwen/qwen3.8-27b` makes proper tool calls.
+- **Google AI Studio** (Gemini): about 5 requests/min and only 20 requests **per day and model**.
+
+`client.py` therefore:
 
 - waits and retries on per-minute limits, 503 "high demand" errors and dropped connections (each wait is printed as `[Wait]` and stored in the log);
-- stops immediately with a clear `[Error]` when the quota resets only after hours – switch `LLM_MODEL` in `.env`, wait, or enable billing for the key.
+- stops immediately with a clear `[Error]` when the quota resets only after hours – switch `LLM_MODEL` in `.env`, wait, or use another provider.
 
 ## Run
 
